@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Local Marauders - Goleta & Santa Barbara</title>
+    <style>
+        #game_map { height: 600px; width: 100%; position: relative; z-index: 1; border: 1px solid red; }
+        #leaderboard { position: absolute; top: 10px; right: 10px; background: white; padding: 10px; border: 1px solid #ccc; z-index: 2000; }
+        #user-info { position: absolute; top: 50px; left: 10px; background: white; padding: 5px; border: 1px solid #ccc; z-index: 2000; }
+        #event-message { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); background: #ff5555; color: white; padding: 10px; border-radius: 5px; display: none; z-index: 2000; }
+        #powerup-info { position: absolute; top: 80px; left: 10px; background: white; padding: 5px; border: 1px solid #ccc; z-index: 2000; }
+        #ticker { position: absolute; top: 0; left: 0; width: 100%; background: rgba(0, 0, 0, 0.8); color: #ffd700; padding: 5px; text-align: center; font-size: 14px; z-index: 2000; }
+        #weather-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 100; opacity: 0.3; }
+        #upgrades { position: absolute; top: 110px; left: 10px; background: white; padding: 5px; border: 1px solid #ccc; z-index: 2000; }
+        pre { margin: 5px 0; }
+        .avatar-tooltip img { width: 32px; height: 32px; }
+        .capture-bar { width: 100px; height: 10px; background: #ccc; border: 1px solid #000; z-index: 1000; }
+        .capture-fill { height: 100%; background: #ff5555; transition: width 0.5s linear; }
+        .boost-indicator { color: purple; font-weight: bold; }
+        .powerup-indicator { color: #00ff00; font-weight: bold; }
+        .avatar-marker { width: 24px; height: 24px; }
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div id="ticker">Red Surfers: 0 | Blue Anglers: 0 | Game starting...</div>
+    <div id="game_map">{{ map|safe }}</div>
+    <div id="weather-overlay"></div>
+    <div id="user-info">
+        Logged in as: {{ username }} ({{ 'Red Surfers' if team == 'Red' else 'Blue Anglers' }})
+        <img src="/static/teams/{{ 'red_surfers' if team == 'Red' else 'blue_anglers' }}.png" alt="{{ team }}" style="width: 24px; height: 24px; vertical-align: middle;">
+        <img src="/static/avatars/{{ avatar }}.png" alt="{{ avatar }}" style="width: 24px; height: 24px; vertical-align: middle;">
+        | Points: <span id="user-points">{{ user_points }}</span> | <a href="/logout">Logout</a>
+    </div>
+    <div id="powerup-info">Power-Up: None</div>
+    <div id="upgrades">
+        <button onclick="buyUpgrade('double_claim')">Double Claim (50)</button>
+        <button onclick="buyUpgrade('stealth_mode')">Stealth Mode (75)</button>
+        <button onclick="buyUpgrade('defense_boost')">Defense Boost (100)</button>
+    </div>
+    <div id="leaderboard">
+        <button onclick="updateLeaderboard()">Leaderboard</button>
+        <pre id="scores">No scores yet</pre>
+    </div>
+    <div id="event-message"></div>
+    <script>
+        let socket = io();
+        const zoneData = {{ zone_data|tojson|safe }};
+        const zones = {{ zones|tojson|safe }};
+        const users = {{ users|tojson|safe }};
+        const player = "{{ username }}";
+        const playerAvatar = "{{ avatar }}";
+        const playerTeam = "{{ team }}";
+
+        console.log("Zone data:", zoneData);
+        console.log("Zones:", zones);
+
+        let map;
+        let avatarMarkers = {};
+        let zonePolygons = {};  // Store polygons for easier updates
+
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("DOM fully loaded, initializing map interactions");
+
+            let gameMapDiv = document.getElementById('game_map');
+            console.log("game_map content length:", gameMapDiv.innerHTML.length);
+
+            let mapDiv = document.querySelector('div[id^="map_"]');
+            let mapId;
+            if (mapDiv) {
+                mapId = mapDiv.id;
+                console.log("Detected map ID:", mapId);
+            } else {
+                console.warn("No map div found with id starting 'map_'. Checking all divs...");
+                let divs = document.getElementsByTagName('div');
+                for (let div of divs) {
+                    if (div.id && window[div.id] && window[div.id] instanceof L.Map) {
+                        mapId = div.id;
+                        console.log("Found map instance with ID:", mapId);
+                        break;
+                    }
+                }
+            }
+
+            if (mapId && window[mapId]) {
+                map = window[mapId];
+                console.log("Using Folium map instance:", map);
+                initializeMapInteractions();
+                initializeDynamicElements();
+            } else {
+                console.warn("No Folium map instance found or not ready. Falling back to manual initialization.");
+                gameMapDiv.innerHTML = '';
+                map = L.map('game_map').setView([34.4283, -119.7629], 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: 'Map data © <a href="https://openstreetmap.org">OpenStreetMap</a> contributors'
+                }).addTo(map);
+
+                Object.keys(zones).forEach(zoneId => {
+                    let zone = zones[zoneId];
+                    let polygon = L.polygon(zone.coords, {
+                        color: zone.team === 'Red' ? 'red' : zone.team === 'Blue' ? 'blue' : 'gray',
+                        fillOpacity: 0.5 + (zone.defense * 0.1),
+                        weight: 2
+                    }).addTo(map);
+                    polygon.__zone_id = zoneId;
+                    polygon.bindPopup(`${zoneId} (${zone.golden ? 'Golden' : 'Normal'})`);
+                    zonePolygons[zoneId] = polygon;
+                    if (zone.owner) {
+                        addAvatarMarker(zoneId, zone.owner);
+                    }
+                });
+
+                console.log("Map instance initialized manually:", map);
+                initializeMapInteractions();
+                initializeDynamicElements();
+            }
+        });
+
+        function addAvatarMarker(zoneId, owner) {
+            console.log("Adding avatar for", zoneId, "by", owner);
+            if (avatarMarkers[zoneId]) {
+                map.removeLayer(avatarMarkers[zoneId]);
+            }
+            let zone = zones[zoneId];
+            let center = L.latLngBounds(zone.coords).getCenter();
+            let avatar = users[owner] || 'default';
+            avatarMarkers[zoneId] = L.marker(center, {
+                icon: L.divIcon({
+                    className: 'avatar-marker',
+                    html: `<img src="/static/avatars/${avatar}.png" style="width: 24px; height: 24px;">`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12]
+                })
+            }).addTo(map);
+        }
+
+        function initializeMapInteractions() {
+            console.log("Initializing map interactions");
+            map.eachLayer(layer => {
+                if (layer instanceof L.Polygon) {
+                    let zoneId = layer.__zone_id || layer.options.__zone_id;
+                    if (!zoneId && layer._popup) {
+                        let popupContent = layer._popup._content;
+                        let match = popupContent.match(/zone_\d+/);
+                        zoneId = match ? match[0] : null;
+                    }
+                    console.log("Found polygon with zoneId:", zoneId);
+
+                    if (zoneId) {
+                        layer.on('click', () => {
+                            console.log('Polygon clicked:', zoneId);
+                            socket.emit('start_capture', { zone: zoneId, player: player });
+                        });
+                    } else {
+                        console.warn("Polygon found without zoneId:", layer);
+                    }
+                }
+            });
+        }
+
+        function initializeDynamicElements() {
+            let captureBars = {};
+            let powerupMarkers = {};
+            Object.keys(zones).forEach(zoneId => {
+                let zone = zones[zoneId];
+                let center = L.latLngBounds(zone.coords).getCenter();
+                let bar = L.marker(center, {
+                    icon: L.divIcon({
+                        className: 'capture-bar',
+                        html: '<div class="capture-fill" style="width: 0%;"></div>',
+                        iconSize: [100, 10],
+                        iconAnchor: [50, -10]
+                    })
+                }).addTo(map);
+                captureBars[zoneId] = bar;
+                bar.setOpacity(0);
+
+                if (zone.boost) {
+                    L.marker(center, {
+                        icon: L.divIcon({ className: 'boost-indicator', html: 'BOOST', iconSize: [50, 20] })
+                    }).addTo(map);
+                }
+                if (zone.powerup) {
+                    powerupMarkers[zoneId] = L.marker(center, {
+                        icon: L.divIcon({ className: 'powerup-indicator', html: zone.powerup === 'speed' ? 'SPEED' : 'SHIELD', iconSize: [50, 20] })
+                    }).addTo(map).on('click', () => socket.emit('collect_powerup', { zone: zoneId, player: player }));
+                }
+            });
+
+            socket.on('connect', () => console.log('SocketIO connected'));
+            socket.on('update_map', (updatedZones) => {
+                console.log('Received update_map:', updatedZones);
+                Object.keys(updatedZones).forEach(zoneId => {
+                    let zone = updatedZones[zoneId];
+                    zones[zoneId] = zone;
+
+                    if (zonePolygons[zoneId]) {
+                        zonePolygons[zoneId].setStyle({
+                            color: zone.team === 'Red' ? 'red' : zone.team === 'Blue' ? 'blue' : 'gray',
+                            fillOpacity: 0.5 + (zone.defense * 0.1)
+                        });
+                    }
+
+                    if (zone.owner) {
+                        addAvatarMarker(zoneId, zone.owner);
+                    } else if (avatarMarkers[zoneId]) {
+                        map.removeLayer(avatarMarkers[zoneId]);
+                        delete avatarMarkers[zoneId];
+                    }
+
+                    let center = L.latLngBounds(zone.coords).getCenter();
+                    if (zone.boost && !captureBars[zoneId].boostMarker) {
+                        captureBars[zoneId].boostMarker = L.marker(center, {
+                            icon: L.divIcon({ className: 'boost-indicator', html: 'BOOST', iconSize: [50, 20] })
+                        }).addTo(map);
+                    } else if (!zone.boost && captureBars[zoneId].boostMarker) {
+                        map.removeLayer(captureBars[zoneId].boostMarker);
+                        delete captureBars[zoneId].boostMarker;
+                    }
+
+                    if (zone.powerup && !powerupMarkers[zoneId]) {
+                        powerupMarkers[zoneId] = L.marker(center, {
+                            icon: L.divIcon({ className: 'powerup-indicator', html: zone.powerup === 'speed' ? 'SPEED' : 'SHIELD', iconSize: [50, 20] })
+                        }).addTo(map).on('click', () => socket.emit('collect_powerup', { zone: zoneId, player: player }));
+                    } else if (!zone.powerup && powerupMarkers[zoneId]) {
+                        map.removeLayer(powerupMarkers[zoneId]);
+                        delete powerupMarkers[zoneId];
+                    }
+                });
+            });
+
+            socket.on('capture_update', (data) => {
+                console.log(`Capture update: ${data.zone}, Player: ${data.player}, Time: ${data.time_left}, Base: ${data.base_time}`);
+                let bar = captureBars[data.zone];
+                bar.setOpacity(1);
+                let fill = bar.getElement().querySelector('.capture-fill');
+                fill.style.width = '100%';
+                fill.style.background = data.contested ? '#ffff00' : '#ff5555';
+            });
+
+            socket.on('capture_progress', (data) => {
+                console.log(`Capture progress: ${data.zone}, Time left: ${data.time_left}, Base: ${data.base_time}`);
+                let bar = captureBars[data.zone];
+                let fill = bar.getElement().querySelector('.capture-fill');
+                let percent = (data.time_left / data.base_time) * 100;
+                fill.style.width = `${Math.max(0, percent)}%`;
+                if (data.time_left <= 0) {
+                    bar.setOpacity(0);
+                    console.log(`Capture ended: ${data.zone}`);
+                    if (zones[data.zone].capturing === player) {
+                        console.log("Local player completed capture, adding avatar");
+                        addAvatarMarker(data.zone, player);
+                        if (zonePolygons[data.zone]) {
+                            zonePolygons[data.zone].setStyle({
+                                color: playerTeam === 'Red' ? 'red' : 'blue'
+                            });
+                        }
+                    }
+                }
+            });
+        }
+
+        socket.on('event_update', (eventData) => {
+            console.log('Event update:', eventData);
+            let eventMessage = document.getElementById('event-message');
+            eventMessage.innerText = eventData.message;
+            eventMessage.style.display = 'block';
+            if (eventData.type.includes('end')) {
+                setTimeout(() => eventMessage.style.display = 'none', 3000);
+            }
+        });
+
+        socket.on('powerup_collected', (data) => {
+            console.log('Powerup collected:', data);
+            let powerupInfo = document.getElementById('powerup-info');
+            if (data.powerup) {
+                powerupInfo.innerText = `Power-Up: ${data.powerup} (30s)`;
+                let startTime = Date.now();
+                let interval = setInterval(() => {
+                    let timeLeft = 30 - Math.floor((Date.now() - startTime) / 1000);
+                    if (timeLeft <= 0) {
+                        powerupInfo.innerText = 'Power-Up: None';
+                        clearInterval(interval);
+                    } else {
+                        powerupInfo.innerText = `Power-Up: ${data.powerup} (${timeLeft}s)`;
+                    }
+                }, 1000);
+            } else {
+                powerupInfo.innerText = 'Power-Up: None';
+            }
+        });
+
+        socket.on('team_bonus', (data) => {
+            console.log('Team bonus:', data);
+            let ticker = document.getElementById('ticker');
+            ticker.innerText = `${data.team} earned ${data.bonus} bonus points for ${data.pairs} adjacent zone pair(s)!`;
+            setTimeout(updateTicker, 3000);
+        });
+
+        socket.on('ticker_update', (data) => {
+            console.log('Ticker update:', data);
+            let ticker = document.getElementById('ticker');
+            if (data.red_score !== undefined) {
+                ticker.innerText = `Red Surfers: ${data.red_score} | Blue Anglers: ${data.blue_score} | ${data.leader} in the lead! | Weather: ${data.weather || 'Clear'}`;
+            } else {
+                ticker.innerText = data.message;
+                setTimeout(updateTicker, 3000);
+            }
+        });
+
+        socket.on('weather_update', (data) => {
+            console.log('Weather update:', data);
+            let overlay = document.getElementById('weather-overlay');
+            switch (data.weather) {
+                case 'Storm':
+                    overlay.style.background = 'rgba(0, 0, 100, 0.3)';
+                    break;
+                case 'Fog':
+                    overlay.style.background = 'rgba(150, 150, 150, 0.3)';
+                    break;
+                case 'Sunny':
+                    overlay.style.background = 'rgba(255, 215, 0, 0.3)';
+                    break;
+                default:
+                    overlay.style.background = 'none';
+            }
+        });
+
+        function updateTicker() {
+            fetch('/leaderboard').then(response => response.json()).then(data => {
+                let redScore = data.team_scores["Red Surfers"];
+                let blueScore = data.team_scores["Blue Anglers"];
+                let leader = redScore > blueScore ? 'Red Surfers' : blueScore > redScore ? 'Blue Anglers' : 'Tied';
+                document.getElementById('ticker').innerText = `Red Surfers: ${redScore} | Blue Anglers: ${blueScore} | ${leader} in the lead! | Weather: ${currentWeather || 'Clear'}`;
+            });
+        }
+
+        let currentWeather = 'Clear';
+        socket.emit('weather_update', { weather: currentWeather });
+
+        function buyUpgrade(upgrade) {
+            fetch('/upgrade', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upgrade: upgrade })
+            }).then(response => response.json()).then(data => {
+                if (data.success) {
+                    document.getElementById('user-points').innerText = data.points;
+                    alert(`Purchased ${upgrade.replace('_', ' ')}!`);
+                } else {
+                    alert(data.error);
+                }
+            });
+        }
+
+        function updateLeaderboard() {
+            fetch('/leaderboard').then(response => response.json()).then(data => {
+                let output = "Team Scores:\n";
+                output += `Red Surfers: ${data.team_scores["Red Surfers"]}\nBlue Anglers: ${data.team_scores["Blue Anglers"]}\n\nLeaderboard:\n`;
+                if (data.stats && data.stats.length) {
+                    output += data.stats.map(row => `${row.username} (${row.team}): ${row.score} (Claims: ${row.claims}, Steals: ${row.steals}, Points: ${row.points})`).join('\n');
+                }
+                if (data.rivalries && data.rivalries.length) {
+                    output += "\nRivalries:\n" + data.rivalries.map(r => `${r.player1} vs ${r.player2}: ${r.steal_count} steals`).join('\n');
+                }
+                document.getElementById('scores').innerText = output || 'No scores yet';
+            });
+        }
+    </script>
+</body>
+</html>

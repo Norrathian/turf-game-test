@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Register - Local Marauders</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(to bottom, #1a2a6c, #b21f1f);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+        }
+        .container {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        h1 {
+            font-family: 'Georgia', serif;
+            color: #ffd700;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px #000;
+        }
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        label {
+            display: block;
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #ffd700;
+        }
+        input[type="text"],
+        input[type="password"],
+        .custom-select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ffd700;
+            border-radius: 5px;
+            background: #fff;
+            color: #333;
+            font-size: 16px;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+        input[type="text"]:focus,
+        input[type="password"]:focus,
+        .custom-select:focus {
+            outline: none;
+            border-color: #ff4500;
+            box-shadow: 0 0 5px #ff4500;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #ff4500;
+            border: none;
+            border-radius: 5px;
+            color: #fff;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #e63900;
+        }
+        .error {
+            color: #ff5555;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        .login-link {
+            margin-top: 20px;
+            font-size: 14px;
+        }
+        .login-link a {
+            color: #ffd700;
+            text-decoration: none;
+        }
+        .login-link a:hover {
+            text-decoration: underline;
+        }
+        .custom-select {
+            position: relative;
+            background: #fff;
+        }
+        .selected-option {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+        }
+        .selected-option img {
+            width: 32px;
+            height: 32px;
+            margin-right: 10px;
+        }
+        .options {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            width: 100%;
+            background: #fff;
+            border: 2px solid #ffd700;
+            border-radius: 5px;
+            z-index: 1000;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .options.show {
+            display: block;
+        }
+        .option {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+            color: #333;
+            cursor: pointer;
+        }
+        .option:hover {
+            background: #f0f0f0;
+        }
+        .option img {
+            width: 32px;
+            height: 32px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Join the Marauders</h1>
+        <form method="POST" action="/register">
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label for="avatar">Choose Your Avatar:</label>
+                <div class="custom-select" id="avatar-select">
+                    <div class="selected-option" data-value="pirate">
+                        <img src="/static/avatars/pirate.png" alt="Pirate"> Pirate
+                    </div>
+                    <div class="options">
+                        <div class="option" data-value="pirate">
+                            <img src="/static/avatars/pirate.png" alt="Pirate"> Pirate
+                        </div>
+                        <div class="option" data-value="ninja">
+                            <img src="/static/avatars/ninja.png" alt="Ninja"> Ninja
+                        </div>
+                        <div class="option" data-value="robot">
+                            <img src="/static/avatars/robot.png" alt="Robot"> Robot
+                        </div>
+                        <div class="option" data-value="knight">
+                            <img src="/static/avatars/knight.png" alt="Knight"> Knight
+                        </div>
+                    </div>
+                </div>
+                <input type="hidden" name="avatar" id="avatar-hidden" value="pirate" required>
+            </div>
+            <div class="form-group">
+                <label for="team">Choose Your Crew:</label>
+                <div class="custom-select" id="team-select">
+                    <div class="selected-option" data-value="Red">
+                        <img src="/static/teams/red_surfers.png" alt="Red Surfers"> Red Surfers
+                    </div>
+                    <div class="options">
+                        <div class="option" data-value="Red">
+                            <img src="/static/teams/red_surfers.png" alt="Red Surfers"> Red Surfers
+                        </div>
+                        <div class="option" data-value="Blue">
+                            <img src="/static/teams/blue_anglers.png" alt="Blue Anglers"> Blue Anglers
+                        </div>
+                    </div>
+                </div>
+                <input type="hidden" name="team" id="team-hidden" value="Red" required>
+            </div>
+            <button type="submit">Sign Up</button>
+            {% if error %}
+                <p class="error">{{ error }}</p>
+            {% endif %}
+        </form>
+        <div class="login-link">
+            Already a marauder? <a href="/login">Login here</a>
+        </div>
+    </div>
+    <script>
+        document.querySelectorAll('.custom-select').forEach(select => {
+            const selected = select.querySelector('.selected-option');
+            const options = select.querySelector('.options');
+            const hiddenInput = select.parentElement.querySelector('input[type="hidden"]');
+
+            selected.addEventListener('click', () => {
+                options.classList.toggle('show');
+            });
+
+            options.querySelectorAll('.option').forEach(option => {
+                option.addEventListener('click', () => {
+                    const value = option.getAttribute('data-value');
+                    const html = option.innerHTML;
+                    selected.innerHTML = html;
+                    selected.setAttribute('data-value', value);
+                    hiddenInput.value = value;
+                    options.classList.remove('show');
+                });
+            });
+
+            // Close dropdown if clicking outside
+            document.addEventListener('click', (e) => {
+                if (!select.contains(e.target)) {
+                    options.classList.remove('show');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
